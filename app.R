@@ -27,13 +27,16 @@ get_dat <- function(controls, deficits = rep(0, ncol(controls)) ) {
   }
   diag(p_mat) <- NA
   sig_var <- c(p_mat[lower.tri(p_mat)])
+  sig_def <- apply(rbind(case, controls), 2, function(x){
+    TD(case = x[1], controls = x[-1], alternative = "two.sided", conf_int = FALSE)$p.value
+  } )
   
-  
-  list(weight_mat = weight_mat, p_mat = p_mat, ntask = ntask, sig_var = sig_var)
+  list(weight_mat = weight_mat, p_mat = p_mat, ntask = ntask, sig_var = sig_var, sig_def = sig_def)
 }
 
 
-def_net <- function(weight_mat, ntask, sig_var, show_cor= FALSE){
+
+def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
   require(igraph)
   
   diag(weight_mat) <- 0
@@ -41,7 +44,7 @@ def_net <- function(weight_mat, ntask, sig_var, show_cor= FALSE){
   if (show_cor == FALSE) {
     line_type <- ifelse(sig_var < 0.05, 1, 2)
     gr_mode <- "undirected"
-    plt_sub <- "Solid lines show significant dissociations and the weights are the dissociation sizes"
+    plt_sub <- "Solid lines show significant dissociations and the weights are the dissociation sizes. \n Significant deficits are denoted by red nodes"
     wt <- as.matrix(weight_mat)
     wt <- c(wt[which(lower.tri(weight_mat))])
     
@@ -50,7 +53,7 @@ def_net <- function(weight_mat, ntask, sig_var, show_cor= FALSE){
   } else {
     
     gr_mode <- "plus"
-    plt_sub <- "Solid red lines show significant dissociations and the weights are the dissociation sizes, \n dotted grey lines are the correlations"
+    plt_sub <- "Solid red lines show significant dissociations and the weights are the dissociation sizes, \n dotted grey lines are the correlations. Significant deficits are denoted by red nodes"
     wt <- as.matrix(weight_mat)
     wt <- c(wt)
     
@@ -73,10 +76,13 @@ def_net <- function(weight_mat, ntask, sig_var, show_cor= FALSE){
   E(g)$weight <- wt
   E(g)$width <- wi      
   
-  E(g)$color[!is.na(wi)] <- 'red'
+  E(g)$color[!is.na(wi)] <- "#ff4a2e"
   E(g)$color[is.na(wi)] <- 'grey'
   
   E(g)$lty <- line_type
+  
+  V(g)$color[sig_def < 0.05] <-  "#F47174"
+  V(g)$color[sig_def > 0.05] <-  "#ffb861"
   
   plot(g, layout = layout.circle,
        edge.label = round(E(g)$weight, 2))
@@ -172,7 +178,7 @@ server <- function(input, output, session) {
   }, na= "", caption = "Lower triangular shows dissociation p-values, upper triangular shows correlations")
   
   output$plot <- renderPlot({
-    def_net(data()$weight_mat, data()$ntask, data()$sig_var, show_cor = input$showcor)
+    def_net(data()$weight_mat, data()$ntask, data()$sig_var, data()$sig_def, show_cor = input$showcor)
   }, res = 96)
   
   output$plot2 <- renderPlot({
