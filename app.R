@@ -34,17 +34,66 @@ get_dat <- function(controls, deficits = rep(0, ncol(controls)) ) {
   list(weight_mat = weight_mat, p_mat = p_mat, ntask = ntask, sig_var = sig_var, sig_def = sig_def)
 }
 
+get_sim_dat <- function(n, r, nvar, nsim, defs, typecor = "equal"){
+  
+  
+  if (typecor == "equal") {
+    Sigma <- (1 - diag(nvar)) * r
+    diag(Sigma) <- 1
+  } 
+  if (typecor == "simplex") {
+    Sigma <- toeplitz(c(1, sapply(1:(nvar-1), function(x) r^x)))
+  }
+  
+  sig_df <- tibble(.rows = nsim)
+  for (j in 1:(nvar-1)) { 
+    for (i in (j+1):nvar){
+      sig_df <- sig_df %>%  mutate("{j}_vs_{i}" := 0)
+    }
+  }
+  
+  weight_mat <- array(dim = c(nvar, nvar, nsim))
+  for (i in 1:nsim) {
+    x <- get_dat(MASS::mvrnorm(n, rep(0, nvar),
+                               Sigma = Sigma), defs)
+    pmat <- x$p_mat
+    sig_df[i, ] <- as.list(pmat[lower.tri(pmat)])
+    weight_mat[, , i] <- x$weight_mat
+    
+  }
+  if (nsim != 1){
+    sig_var <- NULL
+    sig_def <- NULL
+  } else {
+    sig_var <- x$sig_var
+    sig_def <- x$sig_def
+  }
+  
+  weight_mat_means <- rowMeans(weight_mat, dims = 2)
+  
+
+  
+  list(sig_df = sig_df, weight_mat_means = weight_mat_means,
+       sig_var = sig_var, sig_def = sig_def,
+       p_mat = pmat, ntask = nvar)
+}
 
 
-def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
+
+def_net <- function(weight_mat, ntask, sig_var = NULL, sig_def = NULL, show_cor= FALSE){
   require(igraph)
   
   diag(weight_mat) <- 0
   
   if (show_cor == FALSE) {
-    line_type <- ifelse(sig_var < 0.05, 1, 2)
+    if (!is.null(sig_var)) line_type <- ifelse(sig_var < 0.05, 1, 2)
     gr_mode <- "undirected"
-    plt_sub <- "Solid lines show significant dissociations and the weights are the dissociation sizes. \n Significant deficits are denoted by red nodes"
+    if(!is.null(sig_var)){
+      plt_sub <- "Solid lines show significant dissociations and the weights are the dissociation sizes. \n Significant deficits are denoted by red nodes"
+    } else {
+      plt_sub <- "Average strength of dissociation shown by edge width and weights as Z[dcc]"
+    }
+    
     wt <- as.matrix(weight_mat)
     wt <- c(wt[which(lower.tri(weight_mat))])
     
@@ -53,7 +102,11 @@ def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
   } else {
     
     gr_mode <- "plus"
-    plt_sub <- "Solid red lines show significant dissociations and the weights are the dissociation sizes, \n dotted grey lines are the correlations. Significant deficits are denoted by red nodes"
+    if(!is.null(sig_var)){
+      plt_sub <- "Solid red lines show significant dissociations and the weights are the dissociation sizes, \n dotted grey lines are the correlations. Significant deficits are denoted by red nodes"
+    } else {
+      plt_sub <- "Average strength of dissociation shown by edge width and weights as Z[dcc]"
+    }
     wt <- as.matrix(weight_mat)
     wt <- c(wt)
     
@@ -63,9 +116,12 @@ def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
     wi <- wi + min(wi, na.rm = TRUE) + 1 #offset 
     
     wt <- wt[which(wt != 0)]
-    line_type <- rep(NA, length(wi))
-    line_type[which(!is.na(wi))] <- ifelse(sig_var < 0.05, 1, 2)
-    line_type[is.na(line_type)] <- 3
+    
+    if (!is.null(sig_var)) {
+      line_type <- rep(NA, length(wi))
+      line_type[which(!is.na(wi))] <- ifelse(sig_var < 0.05, 1, 2)
+      line_type[is.na(line_type)] <- 3
+    }
   }
   
   ad_mat <- matrix(1, nrow = ntask, ncol = ntask)
@@ -79,10 +135,13 @@ def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
   E(g)$color[!is.na(wi)] <- "#ff4a2e"
   E(g)$color[is.na(wi)] <- 'grey'
   
-  E(g)$lty <- line_type
+  if (!is.null(sig_var)) E(g)$lty <- line_type
   
-  V(g)$color[sig_def < 0.05] <-  "#F47174"
-  V(g)$color[sig_def > 0.05] <-  "#ffb861"
+  if (!is.null(sig_def)){
+    V(g)$color[sig_def < 0.05] <-  "#F47174"
+    V(g)$color[sig_def > 0.05] <-  "#ffb861"
+  }
+  
   
   plot(g, layout = layout.circle,
        edge.label = round(E(g)$weight, 2))
@@ -90,16 +149,41 @@ def_net <- function(weight_mat, ntask, sig_var, sig_def, show_cor= FALSE){
         sub = plt_sub)
 }
 
-per_sig <- function(nsig){
+
+
+per_sig <- function(nsig, nvar, bonferroni = TRUE, alpha = 0.05){
+  ntest <- factorial(nvar)/(factorial(nvar-2)*factorial(2))
+  alpha <- alpha
+  alpha <- ifelse(bonferroni, alpha/ntest, alpha)
+  
   ggplot()+
-    geom_bar(aes(x = as.factor(nsig<0.05), fill = as.factor(nsig<0.05)))+
+    geom_bar(aes(x = as.factor(nsig<alpha), fill = as.factor(nsig<alpha)))+
     labs(x = "Significant dissociations") +
     theme_bw() +
     ylim(0, length(nsig))+
     theme(legend.position = "")
 }
 
+pwrplot <- function(sig_df, nvar, bonferroni = TRUE, alpha = 0.05){
 
+    ntest <- factorial(nvar)/(factorial(nvar-2)*factorial(2))
+    alpha <- alpha
+    alpha <- ifelse(bonferroni, alpha/ntest, alpha)
+    
+    pwr <- sig_df %>% pivot_longer(cols = everything(),
+                                   names_to = "dissoc", values_to = "p_value") %>% 
+      group_by(dissoc) %>% 
+      summarise(
+        power = mean(p_value < alpha)
+      )
+  
+  
+  ggplot(pwr, aes(x = dissoc, y = power)) +
+    geom_col(position = "dodge2")+
+    ggtitle("Frequency of found dissociations per test")+
+    ylim(c(0, 1))+
+    theme_bw()
+}
 
 
 
@@ -109,13 +193,16 @@ ui <- fluidPage(
   
   fluidRow(column(1,
                   numericInput("n", label = "Number of controls", value = 25),
+                  numericInput("nsim", label = "Number of iterations", value = 1),
                   numericInput("r", label = "Correlation", value = 0.25, min = 0, max = 0.99),
                   radioButtons("typecor", "Type of correlation",
                                choices = list("Equal" = "equal", "Simplex" = "simplex"), selected = "equal"),
+                  numericInput("alpha", label = "Alpha", value = 0.05, min = 0, max = 1, step = 0.01),
+                  checkboxInput("bonferroni", "Bonferroni correction", value = TRUE),
                   actionButton("simulate", "Simulate!")),
-           column(3,
-                  plotOutput("plot2", width = "300px", height = "300px")),
-           column(8,
+           column(6,
+                  plotOutput("plot2")),
+           column(5,
                   tableOutput("tab"))
   ),
   fluidRow(
@@ -160,21 +247,27 @@ server <- function(input, output, session) {
   })
   
   data <- eventReactive(input$simulate, {
-    if (input$typecor == "equal") {
-      Sigma <- (1 - diag(input$nvar)) * input$r
-      diag(Sigma) <- 1
-    } 
-    if (input$typecor == "simplex") {
-      Sigma <- toeplitz(c(1, sapply(1:(input$nvar-1), function(x) input$r^x)))
-    }
-    get_dat(MASS::mvrnorm(input$n, rep(0, input$nvar),
-                          Sigma = Sigma), defs())
+    get_sim_dat(input$n, input$r, input$nvar, input$nsim, defs = defs(),
+                typecor = input$typecor)
   } )
   
-  
+  nosims <- eventReactive(input$simulate, {
+    nosims <- input$nsim
+  }) 
   
   output$tab <- renderTable({
-    round(data()$p_mat, 3)
+    if (nosims() == 1){
+      ntest <- factorial(input$nvar)/(factorial(input$nvar-2)*factorial(2))
+      
+      ntest <- ifelse(input$bonferroni, ntest, 1)
+      tab <- data()$p_mat
+      
+      tab[lower.tri(tab)] <- replace(tab[lower.tri(tab)]*ntest, tab[lower.tri(tab)]*ntest > 1, 1)
+      
+      round(tab, 3) 
+    } else {
+      NULL
+    }
   }, na= "", caption = "Lower triangular shows dissociation p-values, upper triangular shows correlations")
   
   output$plot <- renderPlot({
@@ -182,8 +275,12 @@ server <- function(input, output, session) {
   }, res = 96)
   
   output$plot2 <- renderPlot({
-    per_sig(data()$sig_var)
-  }, res = 96)
+    if (nosims() == 1){
+      per_sig(data()$sig_var, input$nvar, input$bonferroni, input$alpha)  
+    } else {
+     pwrplot(data()$sig_df, input$nvar, input$bonferroni, input$alpha) 
+    }
+  }, res = 96) 
   
   
 }
