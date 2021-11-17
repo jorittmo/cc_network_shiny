@@ -34,6 +34,7 @@ get_dat <- function(controls, deficits = rep(0, ncol(controls)) ) {
   list(weight_mat = weight_mat, p_mat = p_mat, ntask = ntask, sig_var = sig_var, sig_def = sig_def)
 }
 
+
 get_sim_dat <- function(n, r, nvar, nsim, defs, typecor = "equal"){
   
   
@@ -151,6 +152,7 @@ def_net <- function(weight_mat, ntask, sig_var = NULL, sig_def = NULL, show_cor=
 
 
 
+
 per_sig <- function(nsig, nvar, bonferroni = TRUE, alpha = 0.05){
   ntest <- factorial(nvar)/(factorial(nvar-2)*factorial(2))
   alpha <- alpha
@@ -184,6 +186,7 @@ pwrplot <- function(sig_df, nvar, bonferroni = TRUE, alpha = 0.05){
     ylim(c(0, 1))+
     theme_bw()
 }
+
 
 
 
@@ -275,13 +278,13 @@ server <- function(input, output, session) {
   }, res = 96)
   
   output$plot2 <- renderPlot({
+
     if (nosims() == 1){
       per_sig(data()$sig_var, input$nvar, input$bonferroni, input$alpha)  
     } else {
      pwrplot(data()$sig_df, input$nvar, input$bonferroni, input$alpha) 
     }
   }, res = 96) 
-  
   
 }
 
